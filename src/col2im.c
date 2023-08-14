@@ -62,6 +62,7 @@ void col2im_cpu_ext(const float* data_col, const int channels,
     const int dilation_h, const int dilation_w,
     float* data_im)
 {
+    printf("use function col2im_cpu_ext\n");
     caffe_set(height * width * channels, 0.0F, data_im);
     const int output_h = (height + 2 * pad_h -
         (dilation_h * (kernel_h - 1) + 1)) / stride_h + 1;

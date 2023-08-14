@@ -4,7 +4,8 @@
 #include "box.h"
 #include "dark_cuda.h"
 #include "utils.h"
-
+#include "gles2_helper.h"
+#include "common_shader.h"
 #include <math.h>
 #include <stdio.h>
 #include <assert.h>
@@ -57,6 +58,9 @@ layer make_yolo_layer(int batch, int w, int h, int n, int total, int *mask, int 
 
     l.forward = forward_yolo_layer;
     l.backward = backward_yolo_layer;
+#ifdef GLES2
+    l.forward = forward_yolo_layer_gles2;
+#endif
 #ifdef GPU
     l.forward_gpu = forward_yolo_layer_gpu;
     l.backward_gpu = backward_yolo_layer_gpu;
@@ -671,15 +675,17 @@ void forward_yolo_layer(const layer l, network_state state)
     for (b = 0; b < l.batch; ++b) {
         for (n = 0; n < l.n; ++n) {
             int bbox_index = entry_index(l, b, n*l.w*l.h, 0);
+            
             if (l.new_coords) {
                 //activate_array(l.output + bbox_index, 4 * l.w*l.h, LOGISTIC);    // x,y,w,h
             }
             else {
                 activate_array(l.output + bbox_index, 2 * l.w*l.h, LOGISTIC);        // x,y,
                 int obj_index = entry_index(l, b, n*l.w*l.h, 4);
+                
                 activate_array(l.output + obj_index, (1 + l.classes)*l.w*l.h, LOGISTIC);
             }
-            scal_add_cpu(2 * l.w*l.h, l.scale_x_y, -0.5*(l.scale_x_y - 1), l.output + bbox_index, 1);    // scale x,y
+            //scal_add_cpu(2 * l.w*l.h, l.scale_x_y, -0.5*(l.scale_x_y - 1), l.output + bbox_index, 1);    // scale x,y
         }
     }
 #endif
@@ -1225,5 +1231,143 @@ void forward_yolo_layer_gpu(const layer l, network_state state)
 void backward_yolo_layer_gpu(const layer l, network_state state)
 {
     axpy_ongpu(l.batch*l.inputs, state.net.loss_scale * l.delta_normalizer, l.delta_gpu, 1, state.delta, 1);
+}
+#endif
+
+#ifdef GLES2
+const char frag_yolo_shader[] = STRINGIFY(
+    \n
+    uniform sampler2D data;\n
+    varying vec2 texco;\n
+    uniform float n;\n
+    uniform float classes;
+    uniform float w;
+    uniform float h;
+    uniform float batch;
+    uniform float outputs;
+    uniform float textSize;
+    precision highp int;
+    float entry_index(float outputs, float w ,float h, float batch, float m_location, float entry)
+    {
+    float n =   m_location / (w*h);
+    float loc = mod(m_location, w*h);
+    return batch*outputs + n*w*h*(4.0 + classes + 1.0) + entry*w*h + loc;
+    }
+    float in_range(float i, float minval, float maxval){
+        float a = (i - min(minval, i));
+        float b = (i - max(i, maxval));
+        return step(0.2, -(a*b));
+    } 
+    float sigmoid(float a){
+        return 1.0/(1.0 + exp(-a)); 
+    }
+   \n
+    void main(){
+        vec2 pos = vec2(gl_FragCoord.xy) - vec2(0.5, 0.5);\n;
+        float index = pos.x + pos.y * textSize;
+        vec4 inp_data = texture2D(data, texco);
+        float a = decode_float(inp_data);
+        int num_boxes = int(n);
+        int num_batches = int(batch);
+        float con = 0.0;
+        for(int i = 0; i < num_batches; i++){
+            for(int j = 0; j < num_boxes; j++){
+                float bbox_index = entry_index(outputs, w, h, float(i), float(j)*w*h, 0.0) - 1.0;
+                float obj_index = entry_index(outputs, w, h, float(i), float(j)*w*h, 4.0) - 1.0;
+                float bbox_index_max = (2.0 * w* h) + bbox_index + 1.0;
+                float obj_index_max = ((1.0 + classes) * w * h) + obj_index + 1.0;
+                con = con + in_range(index, bbox_index, bbox_index_max) + in_range(index, obj_index, obj_index_max);
+            }
+        }
+        float res = mix(a, sigmoid(a), con);
+        gl_FragColor = encode_float(res);
+        
+    }\0
+);
+
+void forward_yolo_layer_gles2(const layer l, network_state state){
+    egl_gbm_controller*  my_sp = NULL;
+    gles2_controller* my_con = NULL;
+    const char* file_name = "/dev/dri/renderD128";
+    my_sp = (egl_gbm_controller*)calloc(1, sizeof(egl_gbm_controller));
+    if(my_sp == NULL){
+        perror("Cannot initialize egl_gbm controller");
+        abort();
+    }
+    my_con = (gles2_controller*)calloc(1, sizeof(gles2_controller));
+    if(my_con == NULL){
+        perror("Cannot initialize gles2_controller");
+        abort();
+    }
+    printf("Initialize gles2\n");
+    gles2_init(my_sp, file_name);
+    printf("Start yolo layer!\n");
+    char*frag = (char*)calloc(sizeof(encode_decode_float_shader) + sizeof(frag_yolo_shader) , sizeof(char));
+    if(frag == NULL){
+        perror("Cannot make fragment shader of yolo");
+        abort();
+    }
+    strcat(frag, encode_decode_float_shader);
+    strcat(frag, frag_yolo_shader);
+    printf("Done fragment shader\n");
+    size_t my_sz = (size_t)floor(sqrt(l.outputs*l.batch)) + 1;
+    gles2_make_surface(my_sp, my_sz, my_sz);
+    my_con->num_text = 0;
+    printf("Done make surface\n");
+    gles2_data* data = gles2_make_farr(state.input, l.outputs*l.batch); 
+        
+    gles2_data* res = gles2_make_farr(NULL, l.outputs*l.batch); 
+    printf("Done make arrays\n");
+    gles2_push_farr(my_con, res, NULL, false);
+    
+    my_con->ver_shader = vertex;
+    my_con->frag_shader = &frag[0];
+    // printf("frag_shader = %s\n", frag);
+    // free(frag);
+    // abort();
+        
+    gles2_build(my_con);
+    gles2_push_farr(my_con, data, "data", true);
+    gles2_push_float(my_con, (float)l.n, "n");
+    gles2_push_float(my_con, (float)l.outputs, "outputs");
+    gles2_push_float(my_con, (float)l.batch, "batch");
+    gles2_push_float(my_con, (float)l.w, "w");
+    gles2_push_float(my_con, (float)l.h, "h");
+    gles2_push_float(my_con, (float)l.classes, "classes");
+    gles2_push_float(my_con, (float)(res->textSize), "textSize");
+
+    gles2_make_fbo(my_con, res);
+
+    gles2_setViewport(res->textSize, res->textSize);
+    gles2_compute(my_con);
+    gles2_pull_farr(l.output, l.outputs*l.batch, res);
+    // forward_yolo_layer(l, state);
+    // char *file = NULL;
+    // if(l.w == 13){
+    //     file = "text1.txt";
+    // }
+    // else if(l.w == 26){
+    //     file = "text2.txt";
+    // }
+    // else{
+    //     file = "text3.txt";
+    // }
+    // printf("Start write to file");
+    // FILE* fp = fopen(file,"a");
+    // for(uint32_t i = 0; i < l.outputs; i++){
+    //     fprintf(fp,"input: %f, output_cpu: %f, output_gpu: %f\n", state.input[i], l.output[i], res->fdata[i]);
+    // }
+    // fclose(fp);
+
+    gles2_free_dev_farr(data);
+   
+    gles2_free_dev_farr(res);
+    gles2_destroy_fbo(my_con);
+    gles2_destroy_surface(my_sp);
+    free(frag);
+    gles2_destroy(my_sp);
+    free(my_con);
+    free(my_sp);
+    printf("Done yolo layer\n");
 }
 #endif

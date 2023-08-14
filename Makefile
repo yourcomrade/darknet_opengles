@@ -7,7 +7,7 @@ OPENMP=0
 LIBSO=0
 ZED_CAMERA=0
 ZED_CAMERA_v2_8=0
-
+GLES2 = 1
 # set GPU=1 and CUDNN=1 to speedup on GPU
 # set CUDNN_HALF=1 to further speedup 3 x times (Mixed-precision on Tensor Cores) GPU: Volta, Xavier, Turing and higher
 # set AVX=1 and OPENMP=1 to speedup on CPU (if error occurs then set AVX=0)
@@ -15,7 +15,7 @@ ZED_CAMERA_v2_8=0
 # set ZED_CAMERA_v2_8=1 to enable ZED SDK 2.X
 
 USE_CPP=0
-DEBUG=0
+DEBUG=1
 
 ARCH= -gencode arch=compute_35,code=sm_35 \
       -gencode arch=compute_50,code=[sm_50,compute_50] \
@@ -80,15 +80,21 @@ LDFLAGS= -lm -pthread
 COMMON= -Iinclude/ -I3rdparty/stb/include
 CFLAGS=-Wall -Wfatal-errors -Wno-unused-result -Wno-unknown-pragmas -fPIC -rdynamic
 
+
 ifeq ($(DEBUG), 1)
 #OPTS= -O0 -g
-#OPTS= -Og -g
+#OPTS= -Og -g -O0
 COMMON+= -DDEBUG
 CFLAGS+= -DDEBUG
 else
 ifeq ($(AVX), 1)
 CFLAGS+= -ffp-contract=fast -mavx -mavx2 -msse3 -msse4.1 -msse4.2 -msse4a
 endif
+endif
+
+ifeq ($(GLES2), 1)
+COMMON+= -DGLES2
+CFLAGS+= -DGLES2
 endif
 
 CFLAGS+=$(OPTS)
@@ -157,6 +163,10 @@ LDFLAGS+= -lstdc++
 OBJ+=convolutional_kernels.o activation_kernels.o im2col_kernels.o col2im_kernels.o blas_kernels.o crop_layer_kernels.o dropout_layer_kernels.o maxpool_layer_kernels.o network_kernels.o avgpool_layer_kernels.o
 endif
 
+ifeq ($(GLES2), 1)
+OBJ+= gles2_helper.o
+LDFLAGS+= -lgbm -lEGL -lGLESv2
+endif
 OBJS = $(addprefix $(OBJDIR), $(OBJ))
 DEPS = $(wildcard src/*.h) Makefile include/darknet.h
 

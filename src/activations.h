@@ -45,6 +45,14 @@ void gradient_array_normalize_channels_softmax_ongpu(float *output_gpu, int n, i
 
 #endif
 
+#ifdef GLES2
+void activate_array_gles2(float *x, int n, ACTIVATION a);
+void activate_array_swish_gles2(float *x, int n, float *output_sigmoid_gpu, float *output_gpu);
+void activate_array_mish_gles2(float *x, int n, float *activation_input_gpu, float *output_gpu);
+void activate_array_hard_mish_gles2(float *x, int n, float *activation_input_gpu, float *output_gpu);
+void activate_array_normalize_channels_gles2(float *x, int n, int batch, int channels, int wh_step, float *output_gpu);
+void activate_array_normalize_channels_softmax_gles2(float *x, int n, int batch, int channels, int wh_step, float *output_gpu, int use_max_val);
+#endif
 static inline float stair_activate(float x)
 {
     int n = floorf(x);

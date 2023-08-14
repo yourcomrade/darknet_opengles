@@ -114,6 +114,7 @@ float activate(float x, ACTIVATION a)
 
 void activate_array(float *x, const int n, const ACTIVATION a)
 {
+   
     int i;
     if (a == LINEAR) {}
     else if (a == LEAKY) {

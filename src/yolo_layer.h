@@ -22,7 +22,9 @@ void correct_yolo_boxes(detection *dets, int n, int w, int h, int netw, int neth
 void forward_yolo_layer_gpu(const layer l, network_state state);
 void backward_yolo_layer_gpu(const layer l, network_state state);
 #endif
-
+#ifdef GLES2
+void forward_yolo_layer_gles2(const layer l, network_state state);
+#endif
 #ifdef __cplusplus
 }
 #endif

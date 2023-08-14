@@ -11,6 +11,7 @@
 #include "dark_cuda.h"
 #include "blas.h"
 #include "connected_layer.h"
+#include "gles2_helper.h"
 
 
 extern void predict_classifier(char *datacfg, char *cfgfile, char *weightfile, char *filename, int top);
@@ -461,9 +462,14 @@ int main(int argc, char **argv)
     }
 
 #ifndef GPU
-    gpu_index = -1;
-    printf(" GPU isn't used \n");
-    init_cpu();
+    #ifdef GLES2
+       
+    #else
+        gpu_index = -1;
+        printf(" GPU isn't used \n");
+        init_cpu();
+    #endif
+    
 #else   // GPU
     if(gpu_index >= 0){
         cuda_set_device(gpu_index);
@@ -478,6 +484,11 @@ int main(int argc, char **argv)
 #endif  // CUDNN_HALF
 
 #endif  // GPU
+
+#ifdef GLES2
+    
+
+#endif
 
     show_opencv_info();
 
@@ -555,5 +566,8 @@ int main(int argc, char **argv)
     } else {
         fprintf(stderr, "Not an option: %s\n", argv[1]);
     }
+#ifdef GLES2
+   
+#endif
     return 0;
 }
